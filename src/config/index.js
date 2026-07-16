@@ -1,13 +1,11 @@
+const path = require('path');
+
 module.exports = {
   port: parseInt(process.env.PORT, 10) || 5000,
   jwtSecret: process.env.JWT_SECRET,
   jwtExpiresIn: '15m',
   refreshTokenExpiryDays: 30,
-  msg91: {
-    authKey: process.env.MSG91_AUTH_KEY,
-    templateId: process.env.MSG91_TEMPLATE_ID,
-    senderId: process.env.MSG91_SENDER_ID || 'VIZHAA',
-  },
+  backendUrl: process.env.BACKEND_URL || 'http://localhost:5000',
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID,
     authToken: process.env.TWILIO_AUTH_TOKEN,
@@ -16,5 +14,14 @@ module.exports = {
   razorpay: {
     keyId: process.env.RAZORPAY_KEY_ID,
     keySecret: process.env.RAZORPAY_KEY_SECRET,
+  },
+  firebase: {
+    serviceAccountPath: process.env.FIREBASE_SERVICE_ACCOUNT_PATH
+      ? path.resolve(process.env.FIREBASE_SERVICE_ACCOUNT_PATH)
+      : path.join(__dirname, '../../firebase-service-account.json'),
+  },
+  upload: {
+    dir: path.join(__dirname, '../../uploads'),
+    kycDir: path.join(__dirname, '../../uploads/kyc'),
   },
 };

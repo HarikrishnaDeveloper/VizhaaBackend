@@ -57,7 +57,7 @@ const verifyOtp = async (req, res) => {
       isNewUser: !existingUser,
       accessToken,
       refreshToken,
-      user: { id: user.id, mobile: user.mobile },
+      user: { id: user.id, mobile: user.mobile, role: user.role },
     });
   } catch (error) {
     console.error('Verify OTP Error:', error);

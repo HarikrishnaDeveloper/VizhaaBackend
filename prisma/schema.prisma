@@ -9,23 +9,50 @@ datasource db {
 }
 
 model User {
-  id            String         @id @default(cuid())
-  mobile        String         @unique
-  role          String         @default("USER")
+  id            String   @id @default(cuid())
+  mobile        String   @unique
+  role          String   @default("ORGANIZER") // ORGANIZER | SUPPLIER | ADMIN
   name          String?
   email         String?
+  gender        String?
+  dob           String?
+  // Organizer-specific
   businessName  String?
   companyName   String?
   businessType  String?
   city          String?
   address       String?
   gst           String?
-  gender        String?
-  dob           DateTime?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  refreshTokens RefreshToken[]
-  events        Event[]
+  // FCM push token
+  fcmToken      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  refreshTokens   RefreshToken[]
+  events          Event[]
+  supplierProfile SupplierProfile?
+  notifications   Notification[]
+}
+
+model SupplierProfile {
+  id                 String    @id @default(cuid())
+  userId             String    @unique
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  aadhaarFrontUrl    String?
+  aadhaarBackUrl     String?
+  panCardUrl         String?
+  selfieUrl          String?
+  kycStatus          String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  kycRejectionReason String?
+  kycSubmittedAt     DateTime?
+  kycApprovedAt      DateTime?
+  walletBalance      Float     @default(0)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  enrollments       Enrollment[]
+  transactions      WalletTransaction[]
+  backupAssignments BackupAssignment[]
 }
 
 model RefreshToken {
@@ -48,25 +75,120 @@ model Otp {
   createdAt DateTime @default(now())
 }
 
+// Organizer's event request submitted to Vizhaa
 model Event {
-  id              String   @id @default(cuid())
-  userId          String
-  user            User     @relation(fields: [userId], references: [id])
-  name            String
-  type            String
-  location        String
-  inDate          String
-  inTime          String
-  outDate         String
-  outTime         String
-  suppliers       Int
-  dressCode       String
-  services        String[]
-  costPerHead     Float
-  totalCost       Float
-  advancePaid     Float
-  status          String   @default("Upcoming") // Upcoming, In Progress, Completed
-  progress        Float    @default(0)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  name        String
+  type        String
+  location    String
+  date        String
+  inTime      String
+  outTime     String
+  menCount    Int      @default(0)
+  womenCount  Int      @default(0)
+  suppliers   Int
+  dressCode   String
+  services    String[]
+  costPerHead Float
+  totalCost   Float
+  advancePaid Float
+  status      String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  adminNotes  String?
+  progress    Float    @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  eventPost EventPost?
+}
+
+// Admin-published event post visible to KYC-approved suppliers
+model EventPost {
+  id                  String    @id @default(cuid())
+  eventId             String    @unique
+  event               Event     @relation(fields: [eventId], references: [id])
+  menRequired         Int
+  womenRequired       Int
+  enrolledMen         Int       @default(0)
+  enrolledWomen       Int       @default(0)
+  payPerPerson        Float
+  reportingTime       String
+  uniformRequirements String
+  cancellationHours   Int       @default(48)
+  penaltyPercent      Int       @default(50)
+  status              String    @default("OPEN") // OPEN | FILLED | COMPLETED | CANCELLED
+  isPublished         Boolean   @default(false)
+  publishedAt         DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  enrollments       Enrollment[]
+  backupAssignments BackupAssignment[]
+  notifications     Notification[]
+}
+
+model Enrollment {
+  id             String          @id @default(cuid())
+  supplierId     String
+  supplier       SupplierProfile @relation(fields: [supplierId], references: [id])
+  eventPostId    String
+  eventPost      EventPost       @relation(fields: [eventPostId], references: [id])
+  status         String          @default("ENROLLED") // ENROLLED | CANCELLED | ATTENDED | NO_SHOW
+  enrolledAt     DateTime        @default(now())
+  cancelledAt    DateTime?
+  penaltyApplied Boolean         @default(false)
+  penaltyAmount  Float           @default(0)
+  attended       Boolean         @default(false)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  transactions     WalletTransaction[]
+  backupAssignment BackupAssignment?
+
+  @@unique([supplierId, eventPostId])
+}
+
+model WalletTransaction {
+  id           String          @id @default(cuid())
+  supplierId   String
+  supplier     SupplierProfile @relation(fields: [supplierId], references: [id])
+  amount       Float
+  type         String          // CREDIT | DEBIT
+  reason       String          // EVENT_PAYMENT | PENALTY | WITHDRAWAL | REFUND
+  enrollmentId String?
+  enrollment   Enrollment?     @relation(fields: [enrollmentId], references: [id])
+  status       String          @default("COMPLETED")
+  note         String?
+  createdAt    DateTime        @default(now())
+}
+
+model BackupAssignment {
+  id              String          @id @default(cuid())
+  supplierId      String
+  supplier        SupplierProfile @relation(fields: [supplierId], references: [id])
+  eventPostId     String
+  eventPost       EventPost       @relation(fields: [eventPostId], references: [id])
+  enrollmentId    String?         @unique
+  enrollment      Enrollment?     @relation(fields: [enrollmentId], references: [id])
+  assignedByAdmin String
+  status          String          @default("ASSIGNED") // ASSIGNED | COMPLETED
+  note            String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model Notification {
+  id          String     @id @default(cuid())
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  body        String
+  type        String
+  eventPostId String?
+  eventPost   EventPost? @relation(fields: [eventPostId], references: [id])
+  data        Json?
+  isRead      Boolean    @default(false)
+  createdAt   DateTime   @default(now())
 }

@@ -12,6 +12,7 @@ build/
 
 # Environment variables
 .env
+firebase-service-account.json
 .env.local
 .env.development.local
 .env.test.local

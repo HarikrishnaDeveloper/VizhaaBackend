@@ -3,35 +3,39 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
-  id            String   @id @default(cuid())
-  mobile        String   @unique
-  role          String   @default("ORGANIZER") // ORGANIZER | SUPPLIER | ADMIN
-  name          String?
-  email         String?
-  gender        String?
-  dob           String?
+  id              String    @id @default(cuid())
+  mobile          String    @unique
+  role            String    @default("ORGANIZER") // ORGANIZER | SUPPLIER | ADMIN
+  name            String?
+  email           String?
+  gender          String?
+  dob             String?
   // Organizer-specific
-  businessName  String?
-  companyName   String?
-  businessType  String?
-  city          String?
-  address       String?
-  gst           String?
+  businessName    String?
+  companyName     String?
+  businessType    String?
+  city            String?
+  address         String?
+  gst             String?
+  // Stored as "<userId>/<file>" under PROFILE_UPLOAD_DIR/profile-photos
+  profilePhoto    String?
+  emailVerified   Boolean   @default(false)
+  emailVerifiedAt DateTime?
   // FCM push token
-  fcmToken      String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  fcmToken        String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  refreshTokens   RefreshToken[]
-  events          Event[]
-  supplierProfile SupplierProfile?
-  notifications   Notification[]
+  refreshTokens     RefreshToken[]
+  events            Event[]
+  supplierProfile   SupplierProfile?
+  notifications     Notification[]
+  emailVerification EmailVerification?
 }
 
 model SupplierProfile {
@@ -77,30 +81,59 @@ model Otp {
 
 // Organizer's event request submitted to Vizhaa
 model Event {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id])
-  name        String
-  type        String
-  location    String
-  date        String
-  inTime      String
-  outTime     String
-  menCount    Int      @default(0)
-  womenCount  Int      @default(0)
-  suppliers   Int
-  dressCode   String
-  services    String[]
-  costPerHead Float
-  totalCost   Float
-  advancePaid Float
-  status      String   @default("PENDING") // PENDING | APPROVED | REJECTED
-  adminNotes  String?
-  progress    Float    @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id])
+  name             String
+  type             String
+  location         String
+  // Precise venue chosen on the map (all optional so older events stay valid)
+  locationName     String?
+  formattedAddress String?
+  city             String?
+  state            String?
+  pincode          String?
+  latitude         Float?
+  longitude        Float?
+  placeId          String?
+  date             String
+  inTime           String
+  outTime          String
+  menCount         Int      @default(0)
+  womenCount       Int      @default(0)
+  suppliers        Int
+  dressCode        String
+  services         String[]
+  costPerHead      Float
+  totalCost        Float
+  advancePaid      Float
+  status           String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  adminNotes       String?
+  progress         Float    @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   eventPost EventPost?
+  payments  Payment[]
+
+  @@index([latitude, longitude])
+}
+
+// One row per verified Razorpay payment. The unique payment id makes event
+// creation idempotent: retrying verification can never create a second event.
+model Payment {
+  id                String   @id @default(cuid())
+  razorpayPaymentId String   @unique
+  razorpayOrderId   String?
+  userId            String
+  eventId           String
+  event             Event    @relation(fields: [eventId], references: [id])
+  amount            Float
+  purpose           String // ADVANCE | BALANCE
+  isTest            Boolean  @default(false)
+  createdAt         DateTime @default(now())
+
+  @@index([eventId])
 }
 
 // Admin-published event post visible to KYC-approved suppliers
@@ -155,8 +188,8 @@ model WalletTransaction {
   supplierId   String
   supplier     SupplierProfile @relation(fields: [supplierId], references: [id])
   amount       Float
-  type         String          // CREDIT | DEBIT
-  reason       String          // EVENT_PAYMENT | PENALTY | WITHDRAWAL | REFUND
+  type         String // CREDIT | DEBIT
+  reason       String // EVENT_PAYMENT | PENALTY | WITHDRAWAL | REFUND
   enrollmentId String?
   enrollment   Enrollment?     @relation(fields: [enrollmentId], references: [id])
   status       String          @default("COMPLETED")
@@ -191,4 +224,22 @@ model Notification {
   data        Json?
   isRead      Boolean    @default(false)
   createdAt   DateTime   @default(now())
+}
+
+// Pending email verification code (one per user). Only a keyed hash of the
+// code is stored.
+model EmailVerification {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email       String
+  codeHash    String
+  expiresAt   DateTime
+  attempts    Int      @default(0)
+  // Send throttling: sends within the current hourly window
+  sendCount   Int      @default(0)
+  windowStart DateTime @default(now())
+  lastSentAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

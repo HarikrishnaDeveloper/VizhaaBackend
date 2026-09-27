@@ -11,6 +11,23 @@ module.exports = {
     authToken: process.env.TWILIO_AUTH_TOKEN,
     verifyServiceSid: process.env.TWILIO_VERIFY_SERVICE_SID,
   },
+  mail: {
+    host: process.env.BREVO_SMTP_HOST,
+    port: parseInt(process.env.BREVO_SMTP_PORT, 10) || 587,
+    user: process.env.BREVO_SMTP_USER,
+    password: process.env.BREVO_SMTP_PASSWORD,
+    // Must be a sender verified in the Brevo account
+    from: process.env.EMAIL_FROM,
+  },
+  geoapify: {
+    // Server-side only: place search, geocoding and reverse geocoding
+    apiKey: process.env.GEOAPIFY_API_KEY,
+  },
+  payments: {
+    // Lets the app's "[DEV] Simulate Success" create events without Razorpay.
+    // Never honoured in production.
+    allowTestPayments: process.env.ALLOW_TEST_PAYMENTS === 'true' && process.env.NODE_ENV !== 'production',
+  },
   razorpay: {
     keyId: process.env.RAZORPAY_KEY_ID,
     keySecret: process.env.RAZORPAY_KEY_SECRET,
@@ -23,5 +40,13 @@ module.exports = {
   upload: {
     dir: path.join(__dirname, '../../uploads'),
     kycDir: path.join(__dirname, '../../uploads/kyc'),
+    // Profile photos live in <PROFILE_UPLOAD_DIR>/profile-photos/<userId>/
+    profilePhotoDir: path.join(
+      process.env.PROFILE_UPLOAD_DIR
+        ? path.resolve(process.env.PROFILE_UPLOAD_DIR)
+        : path.join(__dirname, '../../uploads'),
+      'profile-photos',
+    ),
+    profilePhotoRoute: '/media/profile-photos',
   },
 };

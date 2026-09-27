@@ -2,7 +2,7 @@ const admin = require('../lib/firebase');
 const prisma = require('../lib/prisma');
 
 const sendPush = async (fcmToken, title, body, data = {}) => {
-  if (!fcmToken) return;
+  if (!fcmToken || !admin.enabled) return;
   try {
     await admin.messaging().send({
       token: fcmToken,

@@ -12,8 +12,11 @@ router.get('/reports', ctrl.getReports);
 
 // Event Requests
 router.get('/events', ctrl.listEventRequests);
+router.get('/events/:id', ctrl.getEventRequest);
 router.put('/events/:id/approve', ctrl.approveEventRequest);
 router.put('/events/:id/reject', ctrl.rejectEventRequest);
+router.put('/events/:id/team', ctrl.updateEventTeam);
+router.put('/events/:id/progress', ctrl.updateEventProgress);
 
 // Event Posts
 router.post('/posts', ctrl.createEventPost);

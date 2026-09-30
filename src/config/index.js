@@ -6,6 +6,8 @@ module.exports = {
   jwtExpiresIn: '15m',
   refreshTokenExpiryDays: 30,
   backendUrl: process.env.BACKEND_URL || 'http://localhost:5000',
+  // Vizhaa support line shown as "Emergency Call" on the organizer's live tracking
+  supportPhone: process.env.SUPPORT_PHONE || null,
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID,
     authToken: process.env.TWILIO_AUTH_TOKEN,

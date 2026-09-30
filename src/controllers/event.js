@@ -1,4 +1,5 @@
 const prisma = require('../lib/prisma');
+const { STATUS, ACTIVE_ENROLLMENT, toOrganizerEvent } = require('../services/eventLifecycle');
 
 const optionalText = (v, max = 300) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
 const optionalCoord = (v, limit) => {
@@ -67,7 +68,7 @@ const buildEventData = (body = {}) => {
       menCount: parseInt(body.menCount, 10) || 0,
       womenCount: parseInt(body.womenCount, 10) || 0,
       totalCost: Math.round(costPerHead * suppliers * 100) / 100,
-      status: 'PENDING',
+      status: STATUS.PENDING,
       progress: 0,
     },
   };
@@ -96,22 +97,44 @@ const getEvents = async (req, res) => {
       include: { eventPost: { select: { id: true, status: true, isPublished: true, enrolledMen: true, enrolledWomen: true } } },
       orderBy: { createdAt: 'desc' },
     });
-    res.json({ success: true, events });
+    res.json({ success: true, events: events.map((e) => toOrganizerEvent(e)) });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Failed to fetch events', error: err.message });
   }
 };
 
+// Live tracking: event plus fixed-step times, on-site leads and assigned suppliers
 const getEventById = async (req, res) => {
   const { id } = req.params;
   const userId = req.user.sub;
   try {
     const event = await prisma.event.findFirst({
       where: { id, userId },
-      include: { eventPost: true },
+      include: {
+        eventPost: {
+          include: {
+            enrollments: {
+              where: { status: { in: ACTIVE_ENROLLMENT } },
+              include: { supplier: { include: { user: { select: { name: true, mobile: true } } } } },
+              orderBy: { enrolledAt: 'asc' },
+            },
+          },
+        },
+      },
     });
     if (!event) return res.status(404).json({ success: false, message: 'Event not found' });
-    res.json({ success: true, event });
+
+    const supplierIds = (event.eventPost?.enrollments || []).map((e) => e.supplierId);
+    const attended = supplierIds.length
+      ? await prisma.enrollment.groupBy({
+          by: ['supplierId'],
+          where: { supplierId: { in: supplierIds }, status: 'ATTENDED' },
+          _count: { _all: true },
+        })
+      : [];
+    const attendedCounts = Object.fromEntries(attended.map((a) => [a.supplierId, a._count._all]));
+
+    res.json({ success: true, event: toOrganizerEvent(event, attendedCounts) });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Failed to fetch event' });
   }

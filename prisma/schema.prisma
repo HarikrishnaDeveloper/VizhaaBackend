@@ -109,9 +109,21 @@ model Event {
   costPerHead      Float
   totalCost        Float
   advancePaid      Float
-  status           String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  // PENDING → APPROVED → IN_PROGRESS → COMPLETED, or REJECTED (set by the admin panel)
+  status           String   @default("PENDING")
   adminNotes       String?
   progress         Float    @default(0)
+  approvedAt       DateTime?
+  // Live tracking: when each fixed step was reached (null = not yet)
+  supplierAssignedAt DateTime?
+  suppliersArrivedAt DateTime?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  // On-site leads assigned by the admin
+  managerName      String?
+  managerPhone     String?
+  supervisorName   String?
+  supervisorPhone  String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

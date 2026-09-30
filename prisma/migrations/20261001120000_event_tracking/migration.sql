@@ -1,0 +1,10 @@
+-- Event lifecycle tracking and on-site team
+ALTER TABLE "Event" ADD COLUMN "approvedAt" TIMESTAMP(3);
+ALTER TABLE "Event" ADD COLUMN "supplierAssignedAt" TIMESTAMP(3);
+ALTER TABLE "Event" ADD COLUMN "suppliersArrivedAt" TIMESTAMP(3);
+ALTER TABLE "Event" ADD COLUMN "startedAt" TIMESTAMP(3);
+ALTER TABLE "Event" ADD COLUMN "completedAt" TIMESTAMP(3);
+ALTER TABLE "Event" ADD COLUMN "managerName" TEXT;
+ALTER TABLE "Event" ADD COLUMN "managerPhone" TEXT;
+ALTER TABLE "Event" ADD COLUMN "supervisorName" TEXT;
+ALTER TABLE "Event" ADD COLUMN "supervisorPhone" TEXT;

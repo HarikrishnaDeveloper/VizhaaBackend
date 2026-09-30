@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { notify } = require('../services/notification');
+const { progressFor } = require('../services/eventLifecycle');
 
 const listAvailable = async (req, res) => {
   const userId = req.user.sub;
@@ -74,7 +75,7 @@ const enroll = async (req, res) => {
       return res.status(403).json({ success: false, message: 'KYC approval required to enroll' });
     }
 
-    const post = await prisma.eventPost.findUnique({ where: { id: eventPostId } });
+    const post = await prisma.eventPost.findUnique({ where: { id: eventPostId }, include: { event: { select: { name: true } } } });
     if (!post || !post.isPublished || post.status !== 'OPEN') {
       return res.status(400).json({ success: false, message: 'Event is not available for enrollment' });
     }
@@ -113,6 +114,15 @@ const enroll = async (req, res) => {
     const updated = await prisma.eventPost.findUnique({ where: { id: eventPostId } });
     if (updated.enrolledMen >= updated.menRequired && updated.enrolledWomen >= updated.womenRequired) {
       await prisma.eventPost.update({ where: { id: eventPostId }, data: { status: 'FILLED' } });
+      // Full team: the organizer's "Supplier Assigned" tracking step is reached
+      const event = await prisma.event.findUnique({ where: { id: updated.eventId } });
+      if (event && !event.supplierAssignedAt) {
+        const assigned = await prisma.event.update({
+          where: { id: event.id },
+          data: { supplierAssignedAt: new Date(), progress: progressFor({ ...event, supplierAssignedAt: true }) },
+        });
+        await notify(assigned.userId, 'Suppliers assigned', `All suppliers for ${assigned.name} are assigned.`, 'EVENT_PROGRESS', { data: { eventId: assigned.id, step: 'supplier_assigned' } });
+      }
     }
 
     await notify(userId, 'Enrollment Confirmed', `You are enrolled for ${post.event?.name || 'the event'}. Report on time!`, 'ENROLLED', { eventPostId });

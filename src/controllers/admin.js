@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { notify, notifyAllSuppliers } = require('../services/notification');
+const { STATUS, ACCEPTED, TRACKING_STEPS, statusForSteps, progressFor } = require('../services/eventLifecycle');
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
@@ -22,12 +23,26 @@ const getDashboard = async (req, res) => {
 
 // ─── Event Requests ──────────────────────────────────────────────────────────
 
+const notesFrom = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 1000) : null);
+
 const listEventRequests = async (req, res) => {
   const { status } = req.query;
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   try {
     const events = await prisma.event.findMany({
-      where: status ? { status } : {},
-      include: { user: { select: { name: true, mobile: true, companyName: true } }, eventPost: true },
+      where: {
+        ...(status && { status }),
+        ...(q && {
+          OR: [
+            ...['name', 'type', 'location', 'locationName', 'city'].map((field) => ({ [field]: { contains: q, mode: 'insensitive' } })),
+            { user: userSearch(q) },
+          ],
+        }),
+      },
+      include: {
+        user: { select: { id: true, name: true, mobile: true, companyName: true } },
+        eventPost: { select: { id: true, status: true, isPublished: true, _count: { select: { enrollments: true } } } },
+      },
       orderBy: { createdAt: 'desc' },
     });
     res.json({ success: true, events });
@@ -36,14 +51,43 @@ const listEventRequests = async (req, res) => {
   }
 };
 
+// Everything the admin event page needs: organizer, payments, post, enrolments
+const getEventRequest = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const event = await prisma.event.findUnique({
+      where: { id },
+      include: {
+        user: { select: { id: true, name: true, mobile: true, email: true, companyName: true, businessName: true } },
+        payments: { orderBy: { createdAt: 'asc' } },
+        eventPost: {
+          include: {
+            enrollments: {
+              include: { supplier: { include: { user: { select: { id: true, name: true, mobile: true, gender: true } } } } },
+              orderBy: { enrolledAt: 'asc' },
+            },
+          },
+        },
+      },
+    });
+    if (!event) return res.status(404).json({ success: false, message: 'Event not found' });
+    res.json({ success: true, event, steps: TRACKING_STEPS });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to get event' });
+  }
+};
+
 const approveEventRequest = async (req, res) => {
   const { id } = req.params;
-  const { adminNotes } = req.body;
   try {
+    const current = await prisma.event.findUnique({ where: { id } });
+    if (!current) return res.status(404).json({ success: false, message: 'Event not found' });
+    if (![STATUS.PENDING, STATUS.REJECTED].includes(current.status)) {
+      return res.status(400).json({ success: false, message: 'This event has already been approved' });
+    }
     const event = await prisma.event.update({
       where: { id },
-      data: { status: 'APPROVED', adminNotes },
-      include: { user: true },
+      data: { status: STATUS.APPROVED, approvedAt: new Date(), adminNotes: notesFrom(req.body.adminNotes) },
     });
     await notify(event.userId, 'Event Request Approved', `Your event "${event.name}" has been approved by Vizhaa.`, 'REQUEST_APPROVED');
     res.json({ success: true, event });
@@ -54,16 +98,103 @@ const approveEventRequest = async (req, res) => {
 
 const rejectEventRequest = async (req, res) => {
   const { id } = req.params;
-  const { adminNotes } = req.body;
+  const adminNotes = notesFrom(req.body.adminNotes);
   try {
+    const current = await prisma.event.findUnique({ where: { id }, include: { eventPost: { select: { isPublished: true, status: true } } } });
+    if (!current) return res.status(404).json({ success: false, message: 'Event not found' });
+    if ([STATUS.IN_PROGRESS, STATUS.COMPLETED].includes(current.status)) {
+      return res.status(400).json({ success: false, message: 'An event that has started cannot be rejected' });
+    }
+    if (current.eventPost?.isPublished && current.eventPost.status !== 'CANCELLED') {
+      return res.status(400).json({ success: false, message: 'Cancel the published supplier post before rejecting this event' });
+    }
     const event = await prisma.event.update({
       where: { id },
-      data: { status: 'REJECTED', adminNotes },
+      data: { status: STATUS.REJECTED, adminNotes },
     });
     await notify(event.userId, 'Event Request Rejected', `Your event "${event.name}" was not approved. Reason: ${adminNotes || 'N/A'}`, 'REQUEST_REJECTED');
     res.json({ success: true, event });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Failed to reject event' });
+  }
+};
+
+// On-site manager & supervisor shown on the organizer's live tracking
+const updateEventTeam = async (req, res) => {
+  const { id } = req.params;
+  const text = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
+  const data = {
+    managerName: text(req.body.managerName, 100),
+    managerPhone: text(req.body.managerPhone, 20),
+    supervisorName: text(req.body.supervisorName, 100),
+    supervisorPhone: text(req.body.supervisorPhone, 20),
+  };
+  try {
+    const current = await prisma.event.findUnique({ where: { id } });
+    if (!current) return res.status(404).json({ success: false, message: 'Event not found' });
+    if (!ACCEPTED.includes(current.status)) {
+      return res.status(400).json({ success: false, message: 'Approve the event before assigning its team' });
+    }
+    const event = await prisma.event.update({ where: { id }, data });
+    const newlyAssigned = [
+      !current.managerName && data.managerName && `Manager: ${data.managerName}`,
+      !current.supervisorName && data.supervisorName && `Supervisor: ${data.supervisorName}`,
+    ].filter(Boolean);
+    if (newlyAssigned.length) {
+      await notify(event.userId, 'On-site team assigned', `${event.name} — ${newlyAssigned.join(', ')}`, 'EVENT_TEAM');
+    }
+    res.json({ success: true, event });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to update team' });
+  }
+};
+
+// Marks a fixed tracking step reached (done: true) or undoes it (done: false).
+// Reaching a step also fills earlier ones; undoing clears later ones. Status
+// and progress follow the steps.
+const updateEventProgress = async (req, res) => {
+  const { id } = req.params;
+  const { step, done = true } = req.body;
+  const idx = TRACKING_STEPS.findIndex((s) => s.key === step);
+  if (idx === -1) return res.status(400).json({ success: false, message: 'Unknown tracking step' });
+  try {
+    const current = await prisma.event.findUnique({ where: { id }, include: { eventPost: { select: { id: true } } } });
+    if (!current) return res.status(404).json({ success: false, message: 'Event not found' });
+    if (!ACCEPTED.includes(current.status)) {
+      return res.status(400).json({ success: false, message: 'Approve the event before tracking it' });
+    }
+
+    const now = new Date();
+    const data = {};
+    TRACKING_STEPS.forEach((s, i) => {
+      if (done && i <= idx && !current[s.field]) data[s.field] = now;
+      if (!done && i >= idx) data[s.field] = null;
+    });
+    const next = { ...current, ...data };
+    data.status = statusForSteps(next);
+    data.progress = progressFor(next);
+
+    const event = await prisma.$transaction(async (tx) => {
+      const updated = await tx.event.update({ where: { id }, data });
+      // The supplier post follows the event's completion
+      const completedNow = data.status === STATUS.COMPLETED && current.status !== STATUS.COMPLETED;
+      const reopened = current.status === STATUS.COMPLETED && data.status !== STATUS.COMPLETED;
+      if (current.eventPost && (completedNow || reopened)) {
+        await tx.eventPost.update({
+          where: { id: current.eventPost.id },
+          data: completedNow ? { status: 'COMPLETED', completedAt: now } : { status: 'FILLED', completedAt: null },
+        });
+      }
+      return updated;
+    });
+
+    if (done && data[TRACKING_STEPS[idx].field]) {
+      const { label } = TRACKING_STEPS[idx];
+      await notify(event.userId, label, `${event.name}: ${label.toLowerCase()}.`, 'EVENT_PROGRESS', { data: { eventId: event.id, step } });
+    }
+    res.json({ success: true, event });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to update progress' });
   }
 };
 
@@ -74,7 +205,12 @@ const createEventPost = async (req, res) => {
   try {
     const event = await prisma.event.findUnique({ where: { id: eventId } });
     if (!event) return res.status(404).json({ success: false, message: 'Event not found' });
-    if (event.status !== 'APPROVED') return res.status(400).json({ success: false, message: 'Event must be approved first' });
+    if (![STATUS.APPROVED, STATUS.IN_PROGRESS].includes(event.status)) {
+      return res.status(400).json({ success: false, message: 'Event must be approved first' });
+    }
+    if (await prisma.eventPost.findUnique({ where: { eventId } })) {
+      return res.status(409).json({ success: false, message: 'This event already has a supplier post' });
+    }
 
     const post = await prisma.eventPost.create({
       data: {
@@ -327,6 +463,13 @@ const markAttendance = async (req, res) => {
   const { enrollmentId } = req.params;
   const { attended } = req.body;
   try {
+    // Attendance credits or penalises the wallet, so it can only be marked once
+    const existing = await prisma.enrollment.findUnique({ where: { id: enrollmentId }, select: { status: true } });
+    if (!existing) return res.status(404).json({ success: false, message: 'Enrollment not found' });
+    if (existing.status !== 'ENROLLED') {
+      return res.status(400).json({ success: false, message: `Attendance already recorded (${existing.status.toLowerCase().replace('_', ' ')})` });
+    }
+
     const enrollment = await prisma.enrollment.update({
       where: { id: enrollmentId },
       data: { attended, status: attended ? 'ATTENDED' : 'NO_SHOW' },
@@ -447,7 +590,7 @@ const getReports = async (req, res) => {
       totalCredits, totalPenalties,
     ] = await Promise.all([
       prisma.event.count(),
-      prisma.event.count({ where: { status: 'APPROVED' } }),
+      prisma.event.count({ where: { status: { in: ACCEPTED } } }),
       prisma.eventPost.count({ where: { status: 'COMPLETED' } }),
       prisma.user.count({ where: { role: 'SUPPLIER' } }),
       prisma.supplierProfile.count({ where: { kycStatus: 'APPROVED' } }),
@@ -475,7 +618,8 @@ const getReports = async (req, res) => {
 };
 
 module.exports = {
-  getDashboard, listEventRequests, approveEventRequest, rejectEventRequest,
+  getDashboard, listEventRequests, getEventRequest, approveEventRequest, rejectEventRequest,
+  updateEventTeam, updateEventProgress,
   createEventPost, publishEventPost, listEventPosts, updateEventPost,
   listPendingKyc, approveKyc, rejectKyc,
   listSuppliers, getSupplierDetail,

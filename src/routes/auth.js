@@ -21,6 +21,7 @@ const verifyLimiter = rateLimit({
 router.post('/send-otp', otpLimiter, ctrl.sendOtp);
 router.post('/verify-otp', verifyLimiter, ctrl.verifyOtp);
 router.post('/resend-otp', otpLimiter, ctrl.resendOtp);
+router.post('/admin-login', verifyLimiter, ctrl.adminLogin);
 router.post('/refresh', ctrl.refresh);
 router.post('/logout', ctrl.logout);
 

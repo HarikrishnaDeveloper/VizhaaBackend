@@ -13,6 +13,8 @@ model User {
   role            String    @default("ORGANIZER") // ORGANIZER | SUPPLIER | ADMIN
   name            String?
   email           String?
+  // bcrypt hash; only set for ADMIN accounts (dashboard email/password login)
+  passwordHash    String?
   gender          String?
   dob             String?
   // Organizer-specific
@@ -131,6 +133,8 @@ model Payment {
   amount            Float
   purpose           String // ADVANCE | BALANCE
   isTest            Boolean  @default(false)
+  // Kept in sync by the Razorpay webhook: captured | authorized | refunded
+  status            String   @default("captured")
   createdAt         DateTime @default(now())
 
   @@index([eventId])

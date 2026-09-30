@@ -31,6 +31,8 @@ module.exports = {
   razorpay: {
     keyId: process.env.RAZORPAY_KEY_ID,
     keySecret: process.env.RAZORPAY_KEY_SECRET,
+    // Razorpay Dashboard → Webhooks; verifies POST /api/payments/webhook
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
   },
   firebase: {
     serviceAccountPath: process.env.FIREBASE_SERVICE_ACCOUNT_PATH

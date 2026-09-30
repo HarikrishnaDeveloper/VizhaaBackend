@@ -1,3 +1,4 @@
+const bcrypt = require('bcrypt');
 const prisma = require('../lib/prisma');
 const twilio = require('../services/twilio');
 const tokens = require('../services/tokens');
@@ -101,10 +102,40 @@ const refresh = async (req, res) => {
   }
 };
 
+// Email/password login for the super-admin dashboard (ADMIN accounts only)
+const adminLogin = async (req, res) => {
+  const email = req.body.email?.trim().toLowerCase();
+  const { password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ success: false, message: 'Email and password are required' });
+  }
+
+  try {
+    const user = await prisma.user.findFirst({ where: { email, role: 'ADMIN' } });
+    const valid = user?.passwordHash && (await bcrypt.compare(password, user.passwordHash));
+    if (!valid) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    }
+
+    const accessToken = tokens.generateAccessToken(user.id);
+    const refreshToken = await tokens.generateRefreshToken(user.id);
+
+    return res.json({
+      success: true,
+      accessToken,
+      refreshToken,
+      user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    });
+  } catch (error) {
+    console.error('Admin Login Error:', error);
+    return res.status(500).json({ success: false, message: 'Login failed' });
+  }
+};
+
 const logout = async (req, res) => {
   const { refreshToken } = req.body;
   if (refreshToken) await tokens.revokeRefreshToken(refreshToken).catch(() => {});
   res.json({ success: true });
 };
 
-module.exports = { sendOtp, verifyOtp, resendOtp, refresh, logout };
+module.exports = { sendOtp, verifyOtp, resendOtp, refresh, logout, adminLogin };

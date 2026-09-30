@@ -8,6 +8,7 @@ const authRoutes = require('./routes/auth');
 const organizerRoutes = require('./routes/organizer');
 const eventRoutes = require('./routes/event');
 const paymentRoutes = require('./routes/payment');
+const { handleWebhook } = require('./controllers/payment');
 const supplierRoutes = require('./routes/supplier');
 const eventPostRoutes = require('./routes/eventPost');
 const walletRoutes = require('./routes/wallet');
@@ -18,6 +19,11 @@ const app = express();
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors());
+
+// Razorpay webhook: the signature is computed over the exact raw bytes,
+// so this must be registered before express.json() parses the body
+app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), handleWebhook);
+
 app.use(express.json());
 
 // Serve uploaded KYC files as static assets

@@ -5,9 +5,12 @@ const authenticate = require('../middleware/authenticate');
 const requireRole = require('../middleware/requireRole');
 const { uploadKyc } = require('../services/upload');
 
-router.use(authenticate);
+// Supplier accounts are created by the supplier app's OTP login (verify-otp with app: 'supplier')
+router.use(authenticate, requireRole('SUPPLIER'));
 
-router.post('/profile', ctrl.setupProfile);
+router.get('/profile', ctrl.getProfile);
+router.put('/profile', ctrl.updateProfile);
+router.post('/profile', ctrl.updateProfile);
 router.get('/me', ctrl.getMe);
 router.get('/kyc-status', ctrl.getKycStatus);
 router.post('/kyc', (req, res, next) => {

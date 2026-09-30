@@ -32,6 +32,7 @@ router.put('/kyc/:supplierId/reject', ctrl.rejectKyc);
 // Suppliers
 router.get('/suppliers', ctrl.listSuppliers);
 router.get('/suppliers/:id', ctrl.getSupplierDetail);
+router.put('/suppliers/:id/status', ctrl.setSupplierStatus);
 
 // Organizers
 router.get('/organizers', ctrl.listOrganizers);

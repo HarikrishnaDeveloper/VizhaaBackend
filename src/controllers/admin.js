@@ -306,9 +306,14 @@ const listPendingKyc = async (req, res) => {
 const approveKyc = async (req, res) => {
   const { supplierId } = req.params;
   try {
+    const current = await prisma.supplierProfile.findUnique({ where: { id: supplierId } });
+    if (!current) return res.status(404).json({ success: false, message: 'Supplier not found' });
+    if (!current.kycSubmittedAt) return res.status(400).json({ success: false, message: 'This supplier has not submitted KYC documents' });
+    if (current.status === 'SUSPENDED') return res.status(409).json({ success: false, message: 'Reinstate the supplier before changing KYC' });
+
     const profile = await prisma.supplierProfile.update({
       where: { id: supplierId },
-      data: { kycStatus: 'APPROVED', kycApprovedAt: new Date(), kycRejectionReason: null },
+      data: { kycStatus: 'APPROVED', kycApprovedAt: new Date(), kycRejectionReason: null, status: 'APPROVED', statusReason: null },
       include: { user: true },
     });
     await notify(profile.userId, 'KYC Approved!', 'Your documents have been verified. You can now enroll in events.', 'KYC_APPROVED');
@@ -320,17 +325,55 @@ const approveKyc = async (req, res) => {
 
 const rejectKyc = async (req, res) => {
   const { supplierId } = req.params;
-  const { reason } = req.body;
+  const reason = req.body.reason?.trim() || 'Documents unclear or invalid';
   try {
+    const current = await prisma.supplierProfile.findUnique({ where: { id: supplierId } });
+    if (!current) return res.status(404).json({ success: false, message: 'Supplier not found' });
+    if (current.status === 'SUSPENDED') return res.status(409).json({ success: false, message: 'Reinstate the supplier before changing KYC' });
+
     const profile = await prisma.supplierProfile.update({
       where: { id: supplierId },
-      data: { kycStatus: 'REJECTED', kycRejectionReason: reason || 'Documents unclear or invalid' },
+      data: { kycStatus: 'REJECTED', kycRejectionReason: reason, status: 'REJECTED', statusReason: reason },
       include: { user: true },
     });
-    await notify(profile.userId, 'KYC Rejected', `Reason: ${reason || 'Documents unclear or invalid'}. Please resubmit.`, 'KYC_REJECTED');
+    await notify(profile.userId, 'KYC Rejected', `Reason: ${reason}. Please resubmit.`, 'KYC_REJECTED');
     res.json({ success: true, profile });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Failed to reject KYC' });
+  }
+};
+
+// PUT /admin/suppliers/:id/status { status: 'SUSPENDED' | 'APPROVED', reason }
+// Suspends a supplier, or reinstates a suspended one whose KYC was approved
+const setSupplierStatus = async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  const reason = req.body.reason?.trim() || null;
+  if (!['SUSPENDED', 'APPROVED'].includes(status)) {
+    return res.status(400).json({ success: false, message: 'status must be SUSPENDED or APPROVED' });
+  }
+  try {
+    const current = await prisma.supplierProfile.findUnique({ where: { userId: id } });
+    if (!current) return res.status(404).json({ success: false, message: 'Supplier not found' });
+    if (status === 'APPROVED' && (current.status !== 'SUSPENDED' || current.kycStatus !== 'APPROVED')) {
+      return res.status(409).json({ success: false, message: 'Only a suspended supplier with approved KYC can be reinstated' });
+    }
+    if (status === 'SUSPENDED' && current.status === 'SUSPENDED') {
+      return res.status(409).json({ success: false, message: 'Supplier is already suspended' });
+    }
+
+    const profile = await prisma.supplierProfile.update({
+      where: { userId: id },
+      data: { status, statusReason: status === 'SUSPENDED' ? reason : null },
+    });
+    if (status === 'SUSPENDED') {
+      await notify(id, 'Account Suspended', reason ? `Reason: ${reason}` : 'Please contact Vizhaa support.', 'ACCOUNT_SUSPENDED');
+    } else {
+      await notify(id, 'Account Reinstated', 'Your supplier account is active again.', 'ACCOUNT_REINSTATED');
+    }
+    res.json({ success: true, profile });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to update supplier status' });
   }
 };
 
@@ -347,17 +390,21 @@ const userSearch = (q) =>
     : {};
 
 const listSuppliers = async (req, res) => {
-  const { kycStatus, q } = req.query;
+  const { kycStatus, status, q } = req.query;
   try {
     const users = await prisma.user.findMany({
       where: {
         role: 'SUPPLIER',
-        ...(kycStatus && { supplierProfile: { kycStatus } }),
+        ...((kycStatus || status) && { supplierProfile: { ...(kycStatus && { kycStatus }), ...(status && { status }) } }),
         ...userSearch(q?.trim()),
       },
       include: {
         supplierProfile: {
-          select: { id: true, kycStatus: true, walletBalance: true, kycSubmittedAt: true, _count: { select: { enrollments: true } } },
+          select: {
+            id: true, status: true, kycStatus: true, walletBalance: true, kycSubmittedAt: true,
+            businessName: true, businessType: true, city: true,
+            _count: { select: { enrollments: true } },
+          },
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -622,7 +669,7 @@ module.exports = {
   updateEventTeam, updateEventProgress,
   createEventPost, publishEventPost, listEventPosts, updateEventPost,
   listPendingKyc, approveKyc, rejectKyc,
-  listSuppliers, getSupplierDetail,
+  listSuppliers, getSupplierDetail, setSupplierStatus,
   listOrganizers, getOrganizerDetail,
   listEnrollments, markAttendance,
   assignBackup, listBackupAssignments,

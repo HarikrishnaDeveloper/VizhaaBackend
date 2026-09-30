@@ -44,6 +44,27 @@ model SupplierProfile {
   id                 String    @id @default(cuid())
   userId             String    @unique
   user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Onboarding lifecycle: DRAFT (profile incomplete) → KYC_PENDING (profile done,
+  // documents not yet sent) → UNDER_REVIEW (admin reviewing) → APPROVED | REJECTED;
+  // an admin can SUSPEND an approved supplier
+  status             String    @default("DRAFT")
+  statusReason       String?
+  // Basic details
+  ownerName          String?
+  email              String?
+  phone              String?
+  gender             String?
+  dob                String?
+  businessName       String?
+  businessType       String?
+  // Address (picked on the map)
+  address            String?
+  city               String?
+  state              String?
+  pincode            String?
+  latitude           Float?
+  longitude          Float?
+  transportMode      String?
   aadhaarFrontUrl    String?
   aadhaarBackUrl     String?
   panCardUrl         String?
@@ -59,6 +80,8 @@ model SupplierProfile {
   enrollments       Enrollment[]
   transactions      WalletTransaction[]
   backupAssignments BackupAssignment[]
+
+  @@index([status])
 }
 
 model RefreshToken {

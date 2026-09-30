@@ -5,15 +5,16 @@ const { notify, notifyAllSuppliers } = require('../services/notification');
 
 const getDashboard = async (req, res) => {
   try {
-    const [totalEvents, pendingEvents, totalSuppliers, pendingKyc, openPosts, totalEnrollments] = await Promise.all([
+    const [totalEvents, pendingEvents, totalOrganizers, totalSuppliers, pendingKyc, openPosts, totalEnrollments] = await Promise.all([
       prisma.event.count(),
       prisma.event.count({ where: { status: 'PENDING' } }),
+      prisma.user.count({ where: { role: 'ORGANIZER' } }),
       prisma.user.count({ where: { role: 'SUPPLIER' } }),
       prisma.supplierProfile.count({ where: { kycStatus: 'PENDING', kycSubmittedAt: { not: null } } }),
       prisma.eventPost.count({ where: { status: 'OPEN', isPublished: true } }),
       prisma.enrollment.count({ where: { status: 'ENROLLED' } }),
     ]);
-    res.json({ success: true, stats: { totalEvents, pendingEvents, totalSuppliers, pendingKyc, openPosts, totalEnrollments } });
+    res.json({ success: true, stats: { totalEvents, pendingEvents, totalOrganizers, totalSuppliers, pendingKyc, openPosts, totalEnrollments } });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Failed to get dashboard', details: err.message });
   }
@@ -199,15 +200,30 @@ const rejectKyc = async (req, res) => {
 
 // ─── Suppliers ───────────────────────────────────────────────────────────────
 
+// Case-insensitive match on the common identity fields
+const userSearch = (q) =>
+  q
+    ? {
+        OR: ['name', 'mobile', 'email', 'companyName', 'businessName', 'city'].map((field) => ({
+          [field]: { contains: q, mode: 'insensitive' },
+        })),
+      }
+    : {};
+
 const listSuppliers = async (req, res) => {
-  const { kycStatus } = req.query;
+  const { kycStatus, q } = req.query;
   try {
     const users = await prisma.user.findMany({
       where: {
         role: 'SUPPLIER',
         ...(kycStatus && { supplierProfile: { kycStatus } }),
+        ...userSearch(q?.trim()),
       },
-      include: { supplierProfile: { select: { kycStatus: true, walletBalance: true, kycSubmittedAt: true } } },
+      include: {
+        supplierProfile: {
+          select: { id: true, kycStatus: true, walletBalance: true, kycSubmittedAt: true, _count: { select: { enrollments: true } } },
+        },
+      },
       orderBy: { createdAt: 'desc' },
     });
     res.json({ success: true, suppliers: users });
@@ -230,10 +246,64 @@ const getSupplierDetail = async (req, res) => {
         },
       },
     });
-    if (!user) return res.status(404).json({ success: false, message: 'Supplier not found' });
-    res.json({ success: true, supplier: user });
+    if (!user || user.role !== 'SUPPLIER') return res.status(404).json({ success: false, message: 'Supplier not found' });
+    const { passwordHash, fcmToken, ...supplier } = user;
+    res.json({ success: true, supplier });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Failed to get supplier detail' });
+  }
+};
+
+// ─── Organizers ──────────────────────────────────────────────────────────────
+
+const organizerSelect = {
+  id: true, name: true, mobile: true, email: true, emailVerified: true, companyName: true,
+  businessName: true, businessType: true, city: true, address: true, gst: true, createdAt: true,
+};
+
+const listOrganizers = async (req, res) => {
+  const { q } = req.query;
+  try {
+    const users = await prisma.user.findMany({
+      where: { role: 'ORGANIZER', ...userSearch(q?.trim()) },
+      select: { ...organizerSelect, _count: { select: { events: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    const spend = await prisma.event.groupBy({
+      by: ['userId'],
+      where: { userId: { in: users.map((u) => u.id) } },
+      _sum: { totalCost: true },
+    });
+    const spendByUser = Object.fromEntries(spend.map((s) => [s.userId, s._sum.totalCost || 0]));
+    res.json({
+      success: true,
+      organizers: users.map((u) => ({ ...u, totalSpend: spendByUser[u.id] || 0 })),
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to list organizers' });
+  }
+};
+
+const getOrganizerDetail = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const organizer = await prisma.user.findFirst({
+      where: { id, role: 'ORGANIZER' },
+      select: {
+        ...organizerSelect,
+        events: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            eventPost: { select: { id: true, status: true, isPublished: true, _count: { select: { enrollments: true } } } },
+            payments: { select: { id: true, amount: true, purpose: true, status: true, isTest: true, createdAt: true } },
+          },
+        },
+      },
+    });
+    if (!organizer) return res.status(404).json({ success: false, message: 'Organizer not found' });
+    res.json({ success: true, organizer });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to get organizer detail' });
   }
 };
 
@@ -409,6 +479,7 @@ module.exports = {
   createEventPost, publishEventPost, listEventPosts, updateEventPost,
   listPendingKyc, approveKyc, rejectKyc,
   listSuppliers, getSupplierDetail,
+  listOrganizers, getOrganizerDetail,
   listEnrollments, markAttendance,
   assignBackup, listBackupAssignments,
   listTransactions, approveWithdrawal,

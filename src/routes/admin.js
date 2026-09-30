@@ -30,6 +30,10 @@ router.put('/kyc/:supplierId/reject', ctrl.rejectKyc);
 router.get('/suppliers', ctrl.listSuppliers);
 router.get('/suppliers/:id', ctrl.getSupplierDetail);
 
+// Organizers
+router.get('/organizers', ctrl.listOrganizers);
+router.get('/organizers/:id', ctrl.getOrganizerDetail);
+
 // Enrollments
 router.get('/posts/:eventPostId/enrollments', ctrl.listEnrollments);
 router.put('/enrollments/:enrollmentId/attendance', ctrl.markAttendance);
